@@ -1,8 +1,8 @@
 # Uptime Robot
 
-Uptime Robot is a simple uptime monitoring service that pings your website at regular intervals and notifies you if it ever goes down. It's a great way to keep an eye on your website and make sure it's always up and running.
+Uptime Robot is a straightforward uptime monitoring service that regularly checks your website and alerts you if it goes offline. It's an excellent tool for ensuring your website stays operational.
 
-I started this project due to the frustration of downtime of original [uptime&nbsp;robot](https://uptimerobot.com/) service. I wanted to have a simple uptime monitoring service that I could run on my own AWS server and have control over. The setup and configuration of this project are easy enough to tailor to your needs.
+I created this project out of frustration with the downtime of the original [Uptime&nbsp;Robot](https://uptimerobot.com/) service. My goal was to develop a simple monitoring solution that I could host on my own AWS server, giving me full control. The project is designed for easy setup and configuration, allowing you to customize it to suit your specific requirements.
 
 ## Features
 
