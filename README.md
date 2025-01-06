@@ -50,10 +50,10 @@ To get started with Uptime Robot, follow these steps:
 You can configure Uptime Robot by editing the `.env` file. Here are the available options:
 
 - `MAIL_FROM`: The email address to send notifications from.
-- `MONITOR_INTERVAL`: The monitoring interval in seconds. Default is `60`.
+- `MONITOR_INTERVAL`: The monitoring interval in seconds. Default is `300`.
 - `NAME`: The name of the user. This is used in the email notifications. Default is `User`.
 - `REQUEST_RETRIES`: The number of request retries. Default is `10`.
-- `REQUEST_TIMEOUT`: The request timeout in seconds. Default is `10`.
+- `REQUEST_TIMEOUT`: The request timeout in seconds. Default is `90`.
 - `RECIPIENTS`: The email addresses to send notifications to.
 - `SEND_EMAIL_RETRIES`: The number of retries to make if email send fails. Default is `10`.
 - `SMTP_HOST`: The SMTP server to use for sending emails. Default is `smtp.gmail.com`.
