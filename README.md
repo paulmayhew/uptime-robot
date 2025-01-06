@@ -6,7 +6,7 @@ I created this project out of frustration with the downtime of the original [Upt
 
 ## Features
 
-- **Simple**: Uptime Robot is designed to be simple and easy to use. Just add your website URL and email address, and you're good to go.
+- **Simple**: Uptime Robot is designed to be simple and easy to use. Just add your website URL and email address, and you're good to go. It can automatically load the URLs from a file and monitor them after you modify the file.
 
 - **Customizable**: You can customize the monitoring interval, timeout, and notification settings to suit your needs.
 
