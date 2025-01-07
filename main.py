@@ -27,6 +27,26 @@ async def send_request(
     settings: Settings,
     retries: int,
 ) -> int:
+    """
+    Send a HEAD request to the given URL and notify if the response status is not 200.
+    If the request fails, notify the user and retry. Return the number of retries.
+
+    Params
+    ------
+    url: :class:`pydantic.HttpUrl`
+        The URL to monitor
+    session: :class:`aiohttp.ClientSession`
+        The aiohttp ClientSession object
+    settings: :class:`config.Settings`
+        The settings object
+    retries: :class:`int`
+        The number of retries
+
+    Returns
+    -------
+    The number of retries
+    """
+
     try:
         async with session.head(str(url), allow_redirects=True) as response:
             if response.status == 200:
@@ -45,6 +65,22 @@ async def send_request(
 
 
 async def monitor_links(url: HttpUrl, settings: Settings):
+    """
+    Monitors the specified URL by sending periodic HTTP requests.
+
+    Params
+    ------
+    url: :class:`pydantic.HttpUrl`
+        The URL to be monitored
+    settings: :class:`config.Settings`
+        Configuration settings for the monitoring process, including request retries,
+        timeout, and monitor interval
+
+    Returns
+    -------
+    None
+    """
+
     retries = 0
     max_retries = settings.REQUEST_RETRIES
     timeout = ClientTimeout(total=settings.REQUEST_TIMEOUT)
@@ -59,6 +95,27 @@ async def spawn_site_monitors(
     store: dict[str, asyncio.Task],
     settings: Settings,
 ):
+    """
+    Spawns site monitor tasks for URLs listed in the given file and manages the lifecycle
+    of these tasks. This function reads URLs from the specified file, validates them, and
+    creates asynchronous tasks to monitor each URL. It also handles the cancellation of
+    tasks for URLs that are no longer present in the file.
+
+    Params
+    ------
+    file: :class:`pathlib.Path`
+        The path to the file containing the list of URLs to monitor
+    store: :class:`dict[str, asyncio.Task]`
+        A dictionary to store the active monitoring tasks, keyed by URL
+    settings: :class:`config.Settings`
+        Configuration settings for the monitoring tasks
+
+    Raises
+    ------
+    ValidationError
+        If a URL in the file is invalid
+    """
+
     current_links = set(store.keys())
 
     async with aiofiles.open(file, "r") as f:
@@ -81,6 +138,19 @@ async def spawn_site_monitors(
 
 
 async def monitor_file(file: Path):
+    """
+    Monitors a given file for changes and spawns site monitors accordingly.
+
+    Params
+    ------
+    file: :class:`pathlib.Path`
+        The path to the file to be monitored
+
+    Returns
+    -------
+    None
+    """
+
     store: dict[str, asyncio.Task] = {}
     settings = Settings()
 

@@ -61,6 +61,17 @@ log = logging.getLogger(__name__)
 
 
 class Mailer:
+    """
+    A class used to handle sending emails using SMTP over SSL. This class provides
+    methods to get an SMTP client and close the client connection. It uses asynchronous
+    methods to perform login and quit operations in a non-blocking manner.
+
+    Attributes
+    ----------
+    _client: :class:`Optional[smtplib.SMTP_SSL])`
+        A private class attribute to store the SMTP client instance.
+    """
+
     _client: Optional[smtplib.SMTP_SSL] = None
 
     @classmethod
@@ -84,6 +95,28 @@ async def send_email(
     settings: Settings,
     auto_close_client: bool,
 ):
+    """
+    Sends an email using the provided settings and message.
+
+    Params
+    ------
+    message: :class:`email.mime.multipart.MIMEMultipart`
+        The email message to be sent.
+    settings: :class:`Settings`
+        The settings object containing email configuration.
+    auto_close_client: :class:`bool`
+        Whether to automatically close the email client after sending.
+
+    Raises
+    ------
+    smtplib.SMTPException
+        If sending the email fails after the specified number of retries.
+
+    Returns
+    -------
+    None
+    """
+
     client = await Mailer.get_client(settings)
     retries = settings.SEND_EMAIL_RETRIES
 
@@ -114,6 +147,25 @@ async def notify(
     auto_close: bool = False,
     stacktrace="",
 ):
+    """
+    Sends a notification email when a site is down.
+
+    Params
+    ------
+    link: :class:`pydantic.HttpUrl`
+        The URL of the site that is down.
+    settings: :class:`Settings`
+        The settings object containing configuration such as email recipients and sender.
+    auto_close: :class:`bool` :default:False
+        Whether to automatically close the email connection after sending. Defaults to False.
+    stacktrace: :class:`str` :default:""
+        The stack trace to include in the email, if any. Defaults to an empty string.
+
+    Returns
+    -------
+    None
+    """
+
     html = (
         html_template.replace("{name}", settings.NAME)
         .replace("{link}", str(link))
