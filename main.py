@@ -2,7 +2,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-import uvicorn
+from a2wsgi import ASGIMiddleware
 from fastapi import FastAPI
 
 from components.mysql_table_monitor import monitor_sql_table, DatabaseMonitor
@@ -39,13 +39,13 @@ async def health_check():
     return {"status": "running"}
 
 
-def create_app():
-    return app
-
+wsgi_app = ASGIMiddleware(app)
 
 if __name__ == "__main__":
+    import uvicorn
+
     uvicorn.run(
-        "main:create_app()",
+        "main:app",
         host="0.0.0.0",
         port=8080,
         reload=False
