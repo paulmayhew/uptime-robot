@@ -35,7 +35,7 @@ To get started with Uptime Robot, follow these steps:
 3. Create a `.env` file and add your configuration. You can use the `.env.example` file as a template.
 
     ```bash
-    cp .env.example .env
+    cp .env .env
     ```
 
 4. Run the application. It will generate `monitor.txt` file. Add the links you want to monitor in this file. Each link should be on a new line.

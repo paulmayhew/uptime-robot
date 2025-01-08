@@ -1,0 +1,15 @@
+services:
+  - type: cron
+    name: uptime-monitor
+    runtime: docker
+    schedule: "*/15 * * * *"
+    dockerCommand: python main.py
+    envVars:
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DB
+        value: uptime_monitor
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false

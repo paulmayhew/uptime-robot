@@ -1,202 +1,125 @@
 import asyncio
 import logging
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from typing import Optional
+from typing import Optional, Generator
 
-from pydantic import HttpUrl
+import aiohttp
 
 from config import Settings
-
-html_template = """\
-<html>
-<head>
-    <style>
-        :root {
-            font-size: 14px;
-        }
-
-        p {
-            font-size: 0.9rem;
-        }
-
-        pre.codeblock {
-            background-color: #705713;
-            font-size: 0.7rem;
-            padding: 1rem;
-            border-radius: 0.5rem;
-        }
-
-        code {
-            color: #d9d9db;
-        }
-
-        pre.codeblock a {
-            color: #6dcbd6 !important;
-        }
-    </style>
-</head>
-<body>
-    <p>Dear {name},</p>
-    <p>The <a href='{link}'>site</a> is unavailable, please investigate!</p>
-    <p>{stacktrace}</p>
-    <p>
-        Have a nice day!<br>
-        &nbsp;&nbsp;&nbsp;&nbsp; — Uptime Robot
-    </p>
-</body>
-</html>
-"""
-
-text_template = """\
-Dear {name},
-The site ({link}) is down, please investigate!
-{stacktrace}
-Have a nice day!
-    — Uptime Robot
-"""
 
 log = logging.getLogger(__name__)
 
 
-class Mailer:
+class SlackNotifier:
     """
-    A class used to handle sending emails using SMTP over SSL. This class provides
-    methods to get an SMTP client and close the client connection. It uses asynchronous
-    methods to perform login and quit operations in a non-blocking manner.
+    A class used to handle sending notifications to Slack using webhooks. This class provides
+    methods to manage the HTTP session and send messages.
 
     Attributes
     ----------
-    _client: :class:`Optional[smtplib.SMTP_SSL])`
-        A private class attribute to store the SMTP client instance.
+    _session: Optional[aiohttp.ClientSession]
+        A private class attribute to store the HTTP session instance.
     """
 
-    _client: Optional[smtplib.SMTP_SSL] = None
+    _session: Optional[aiohttp.ClientSession] = None
+
+    def __init__(self, link: str, settings: Settings, *, auto_close: bool = False, stacktrace: str = ""):
+        self.link = link
+        self.settings = settings
+        self.auto_close = auto_close
+        self.stacktrace = stacktrace
+
+    def __await__(self) -> Generator:
+        """Make the class awaitable."""
+
+        async def _notify():
+            await self.send_notification()
+
+        return _notify().__await__()
 
     @classmethod
-    async def get_client(cls, settings: Settings) -> smtplib.SMTP_SSL:
-        if cls._client is None:
-            cls._client = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT)
-            await asyncio.to_thread(
-                cls._client.login, settings.SMTP_USERNAME, settings.SMTP_PASSWORD
-            )
-        return cls._client
+    async def get_session(cls) -> aiohttp.ClientSession:
+        if cls._session is None or cls._session.closed:
+            cls._session = aiohttp.ClientSession()
+        return cls._session
 
     @classmethod
-    async def close_client(cls):
-        if cls._client is not None:
-            await asyncio.to_thread(cls._client.quit)
-            cls._client = None
+    async def close_session(cls):
+        if cls._session is not None and not cls._session.closed:
+            await cls._session.close()
+            cls._session = None
 
+    async def send_slack_message(self, payload: dict):
+        """
+        Sends a message to Slack using the provided webhook URL.
 
-async def send_email(
-    message: MIMEMultipart,
-    settings: Settings,
-    auto_close_client: bool,
-):
-    """
-    Sends an email using the provided settings and message.
+        Params
+        ------
+        payload: dict
+            The message payload to be sent to Slack.
 
-    Params
-    ------
-    message: :class:`email.mime.multipart.MIMEMultipart`
-        The email message to be sent.
-    settings: :class:`Settings`
-        The settings object containing email configuration.
-    auto_close_client: :class:`bool`
-        Whether to automatically close the email client after sending.
+        Raises
+        ------
+        aiohttp.ClientError
+            If sending the message fails after the specified number of retries.
+        """
+        session = await self.get_session()
+        retries = getattr(self.settings, 'REQUEST_RETRIES', 3)
 
-    Raises
-    ------
-    smtplib.SMTPException
-        If sending the email fails after the specified number of retries.
+        for retry in range(retries):
+            try:
+                async with session.post(self.settings.SLACK_WEBHOOK_URL, json=payload) as response:
+                    if response.status == 200:
+                        break
+                    else:
+                        log.error(f"Failed to send Slack message. Status: {response.status}")
 
-    Returns
-    -------
-    None
-    """
+                await asyncio.sleep(2 ** retry)
+            except aiohttp.ClientError as e:
+                log.error(f"Failed to send Slack message: {e}")
+                await asyncio.sleep(2 ** retry)
+        else:
+            log.error(f"Failed to send Slack message after {retries} retries")
 
-    client = await Mailer.get_client(settings)
-    retries = settings.SEND_EMAIL_RETRIES
+    async def send_notification(self):
+        """
+        Sends a notification to Slack.
+        """
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Partner Monitor Alert*\n{self.link} has updates!"
+                }
+            }
+        ]
 
-    for retry in range(retries):
-        try:
-            await asyncio.to_thread(
-                client.sendmail,
-                settings.MAIL_FROM,
-                settings.RECIPIENTS,
-                message.as_string(),
-            )
-            break
+        if self.stacktrace:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"```{self.stacktrace}```"
+                }
+            })
 
-        except smtplib.SMTPException as e:
-            log.error(f"Failed to send email: {e}")
-            await asyncio.sleep(2**retry)
-    else:
-        log.error(f"Failed to send email after {retries} retries")
+        payload = {
+            "blocks": blocks,
+            "text": f"Partner Monitor Alert - {self.link}"
+        }
 
-    if auto_close_client:
-        await Mailer.close_client()
+        await self.send_slack_message(payload)
 
-
-async def notify(
-    link: HttpUrl,
-    settings: Settings,
-    *,
-    auto_close: bool = False,
-    stacktrace="",
-):
-    """
-    Sends a notification email when a site is down.
-
-    Params
-    ------
-    link: :class:`pydantic.HttpUrl`
-        The URL of the site that is down.
-    settings: :class:`Settings`
-        The settings object containing configuration such as email recipients and sender.
-    auto_close: :class:`bool` :default:False
-        Whether to automatically close the email connection after sending. Defaults to False.
-    stacktrace: :class:`str` :default:""
-        The stack trace to include in the email, if any. Defaults to an empty string.
-
-    Returns
-    -------
-    None
-    """
-
-    html = (
-        html_template.replace("{name}", settings.NAME)
-        .replace("{link}", str(link))
-        .replace(
-            "{stacktrace}",
-            (
-                f"<pre class='codeblock'><code>{stacktrace}</code></pre>"
-                if stacktrace
-                else ""
-            ),
-        )
-    )
-    text = (
-        text_template.replace("{name}", settings.NAME)
-        .replace("{link}", str(link))
-        .replace("{stacktrace}", f"\n{stacktrace}\n" if stacktrace else "")
-    )
-
-    if stacktrace:
-        html = html.replace("{stacktrace}", f"<pre><code>{stacktrace}</code></pre>")
-
-    message = MIMEMultipart("alternative")
-    message["Subject"] = "Site Down - Uptime Robot"
-    message["From"] = settings.MAIL_FROM
-    message["To"] = ", ".join(settings.RECIPIENTS)
-    message.attach(MIMEText(text, "plain"))
-    message.attach(MIMEText(html, "html"))
-
-    await send_email(message, settings, auto_close)
+        if self.auto_close:
+            await self.close_session()
 
 
 if __name__ == "__main__":
     settings = Settings()
-    asyncio.run(notify(HttpUrl("https://example.com"), settings, auto_close=True))
+
+
+    async def test():
+        await SlackNotifier("Partners Table", settings, auto_close=True, stacktrace="Test message")
+
+
+    asyncio.run(test())

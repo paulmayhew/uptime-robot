@@ -1,182 +1,137 @@
 import asyncio
 import logging
-import os
-import traceback
-from pathlib import Path
+from typing import Optional
 
-import aiofiles
-from aiohttp import ClientSession, ClientTimeout
-from pydantic import HttpUrl, ValidationError
-from watchfiles import awatch
+import aiohttp
+from pydantic import HttpUrl
 
 from config import Settings
-from notifier import Mailer, notify
 
-logging.basicConfig(
-    filename="uptime.log",
-    encoding="utf-8",
-    level=logging.INFO,
-    format="[%(levelname)s] [%(asctime)s] %(message)s",
-)
 log = logging.getLogger(__name__)
 
 
-async def send_request(
-    url: HttpUrl,
-    session: ClientSession,
-    settings: Settings,
-    retries: int,
-) -> int:
+class SlackNotifier:
     """
-    Send a HEAD request to the given URL and notify if the response status is not 200.
-    If the request fails, notify the user and retry. Return the number of retries.
+    A class used to handle sending notifications to Slack using webhooks. This class provides
+    methods to manage the HTTP session and send messages.
 
-    Params
-    ------
-    url: :class:`pydantic.HttpUrl`
-        The URL to monitor
-    session: :class:`aiohttp.ClientSession`
-        The aiohttp ClientSession object
-    settings: :class:`config.Settings`
-        The settings object
-    retries: :class:`int`
-        The number of retries
-
-    Returns
-    -------
-    The number of retries
+    Attributes
+    ----------
+    _session: Optional[aiohttp.ClientSession]
+        A private class attribute to store the HTTP session instance.
     """
 
-    try:
-        async with session.head(str(url), allow_redirects=True) as response:
-            if response.status == 200:
-                return retries
+    _session: Optional[aiohttp.ClientSession] = None
 
-            log.info(f"Site '{response.url}' with response status '{response.status}'")
-            await notify(HttpUrl(str(response.url)), settings)
+    @classmethod
+    async def get_session(cls) -> aiohttp.ClientSession:
+        if cls._session is None or cls._session.closed:
+            cls._session = aiohttp.ClientSession()
+        return cls._session
 
-    except Exception as e:
-        log.error(f"Failed to monitor site '{url}': {e}")
-        stacktrace = traceback.format_exc()
-        await notify(url, settings, stacktrace=stacktrace)
-        retries += 1
-
-    return retries
+    @classmethod
+    async def close_session(cls):
+        if cls._session is not None and not cls._session.closed:
+            await cls._session.close()
+            cls._session = None
 
 
-async def monitor_links(url: HttpUrl, settings: Settings):
-    """
-    Monitors the specified URL by sending periodic HTTP requests.
-
-    Params
-    ------
-    url: :class:`pydantic.HttpUrl`
-        The URL to be monitored
-    settings: :class:`config.Settings`
-        Configuration settings for the monitoring process, including request retries,
-        timeout, and monitor interval
-
-    Returns
-    -------
-    None
-    """
-
-    retries = 0
-    max_retries = settings.REQUEST_RETRIES
-    timeout = ClientTimeout(total=settings.REQUEST_TIMEOUT)
-    async with ClientSession(timeout=timeout) as session:
-        while retries < max_retries:
-            retries = await send_request(url, session, settings, retries)
-            await asyncio.sleep(settings.MONITOR_INTERVAL)
-
-
-async def spawn_site_monitors(
-    file: Path,
-    store: dict[str, asyncio.Task],
-    settings: Settings,
+async def send_slack_message(
+        payload: dict,
+        settings: Settings,
+        auto_close_session: bool,
 ):
     """
-    Spawns site monitor tasks for URLs listed in the given file and manages the lifecycle
-    of these tasks. This function reads URLs from the specified file, validates them, and
-    creates asynchronous tasks to monitor each URL. It also handles the cancellation of
-    tasks for URLs that are no longer present in the file.
+    Sends a message to Slack using the provided webhook URL.
 
     Params
     ------
-    file: :class:`pathlib.Path`
-        The path to the file containing the list of URLs to monitor
-    store: :class:`dict[str, asyncio.Task]`
-        A dictionary to store the active monitoring tasks, keyed by URL
-    settings: :class:`config.Settings`
-        Configuration settings for the monitoring tasks
+    payload: dict
+        The message payload to be sent to Slack.
+    settings: Settings
+        The settings object containing Slack configuration.
+    auto_close_session: bool
+        Whether to automatically close the HTTP session after sending.
 
     Raises
     ------
-    ValidationError
-        If a URL in the file is invalid
+    aiohttp.ClientError
+        If sending the message fails after the specified number of retries.
     """
+    session = await SlackNotifier.get_session()
+    retries = settings.REQUEST_RETRIES
 
-    current_links = set(store.keys())
+    for retry in range(retries):
+        try:
+            async with session.post(
+                    settings.SLACK_WEBHOOK_URL,
+                    json=payload,
+                    timeout=settings.REQUEST_TIMEOUT
+            ) as response:
+                if response.status == 200:
+                    break
+                else:
+                    log.error(f"Failed to send Slack message. Status: {response.status}")
 
-    async with aiofiles.open(file, "r") as f:
-        async for line in f:
-            line = line.strip()
-            if not line or line in store:
-                continue
-            try:
-                url = HttpUrl(line)
-            except ValidationError:
-                log.error(f"Invalid URL: {line}")
-                continue
-            task = asyncio.create_task(monitor_links(url, settings), name=line)
-            store[line] = task
-            current_links.discard(line)
+            await asyncio.sleep(2 ** retry)
+        except aiohttp.ClientError as e:
+            log.error(f"Failed to send Slack message: {e}")
+            await asyncio.sleep(2 ** retry)
+    else:
+        log.error(f"Failed to send Slack message after {retries} retries")
 
-    for link in current_links:
-        task = store.pop(link)
-        task.cancel()
+    if auto_close_session:
+        await SlackNotifier.close_session()
 
 
-async def monitor_file(file: Path):
+async def notify(
+        link: HttpUrl,
+        settings: Settings,
+        *,
+        auto_close: bool = False,
+        stacktrace: str = "",
+):
     """
-    Monitors a given file for changes and spawns site monitors accordingly.
+    Sends a notification to Slack when a site is down.
 
     Params
     ------
-    file: :class:`pathlib.Path`
-        The path to the file to be monitored
-
-    Returns
-    -------
-    None
+    link: HttpUrl
+        The URL of the site that is down.
+    settings: Settings
+        The settings object containing configuration.
+    auto_close: bool, default=False
+        Whether to automatically close the session after sending.
+    stacktrace: str, default=""
+        The stack trace to include in the message, if any.
     """
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Hey {settings.NAME}! :wave:\nThe site {str(link)} is unavailable, please investigate!"
+            }
+        }
+    ]
 
-    store: dict[str, asyncio.Task] = {}
-    settings = Settings()
+    if stacktrace:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"```{stacktrace}```"
+            }
+        })
 
-    if file.exists():
-        await spawn_site_monitors(file, store, settings)
-    else:
-        os.makedirs(file.parent, exist_ok=True)
-        file.touch()
+    payload = {
+        "blocks": blocks,
+        "text": f"Site Down Alert - {str(link)}"
+    }
 
-    async for _ in awatch(file):
-        await spawn_site_monitors(file, store, settings)
-
-    for task in store.values():
-        try:
-            await task
-        except asyncio.CancelledError:
-            print(f"Task '{task.get_name()}' was cancelled")
-            pass
+    await send_slack_message(payload, settings, auto_close)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(monitor_file(Path("./monitor.txt")))
-    except KeyboardInterrupt:
-        ...
-    except Exception as e:
-        print(e)
-    finally:
-        asyncio.run(Mailer.close_client())
+    settings = Settings()
+    asyncio.run(notify(HttpUrl("https://example.com"), settings, auto_close=True))
