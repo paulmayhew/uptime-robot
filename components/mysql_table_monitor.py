@@ -84,6 +84,7 @@ async def check_for_new_rows(settings: Settings, url_manager: MongoDBUrlManager)
                 log.info(f"[{settings.MYSQL_TABLE_NAME}] Found {new_row_count} new rows")
                 await SlackNotifier(
                     link=settings.MYSQL_TABLE_NAME,
+                    is_table=True,
                     settings=settings,
                     stacktrace=f"New rows added:\n{row_details}",
                     auto_close=True
@@ -103,6 +104,7 @@ async def check_for_new_rows(settings: Settings, url_manager: MongoDBUrlManager)
         log.error(error_message)
         await SlackNotifier(
             link=settings.MYSQL_TABLE_NAME,
+            is_table=True,
             settings=settings,
             stacktrace=error_message,
             auto_close=True

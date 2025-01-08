@@ -22,8 +22,10 @@ class SlackNotifier:
 
     _session: Optional[aiohttp.ClientSession] = None
 
-    def __init__(self, link: str, settings: Settings, *, auto_close: bool = False, stacktrace: str = ""):
+    def __init__(self, link: str, is_table: bool, settings: Settings, *, auto_close: bool = False,
+                 stacktrace: str = ""):
         self.link = link
+        self.is_table: bool = is_table
         self.settings = settings
         self.auto_close = auto_close
         self.stacktrace = stacktrace
@@ -137,7 +139,7 @@ class SlackNotifier:
         await self.send_slack_message(payload)
 
     async def send_notification(self):
-        if "table" in str(self.link):
+        if self.is_table:
             await self.send_table_update_notification()
         else:
             await self.send_site_down_notification()

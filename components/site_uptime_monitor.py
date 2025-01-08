@@ -71,12 +71,12 @@ async def send_request(
                 return retries
 
             log.info(f"Site '{response.url}' with response status '{response.status}'")
-            await SlackNotifier(HttpUrl(str(response.url)), settings)
+            await SlackNotifier(HttpUrl(str(response.url)), is_table=False, settings=settings)
 
     except Exception as monitor_error:
         log.error(f"Failed to monitor site '{url}': {monitor_error}")
         stacktrace = traceback.format_exc()
-        await SlackNotifier(url, settings, stacktrace=stacktrace)
+        await SlackNotifier(url, is_table=False, settings=settings, stacktrace=stacktrace)
         retries += 1
 
     return retries
