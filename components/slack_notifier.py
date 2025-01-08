@@ -4,7 +4,7 @@ from typing import Optional, Generator
 
 import aiohttp
 
-from config import Settings
+from utils.config import Settings
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,8 @@ class SlackNotifier:
             If sending the message fails after the specified number of retries.
         """
         session = await self.get_session()
+        if session.closed:
+            session = await self.get_session()
         retries = getattr(self.settings, 'REQUEST_RETRIES', 3)
 
         for retry in range(retries):
@@ -80,16 +82,13 @@ class SlackNotifier:
         else:
             log.error(f"Failed to send Slack message after {retries} retries")
 
-    async def send_notification(self):
-        """
-        Sends a notification to Slack.
-        """
+    async def send_table_update_notification(self):
         blocks = [
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Partner Monitor Alert*\n{self.link} has updates!"
+                    "text": f"*{self.settings.MYSQL_TABLE_NAME} Update Alert*\n{self.link} has new entries!"
                 }
             }
         ]
@@ -105,21 +104,43 @@ class SlackNotifier:
 
         payload = {
             "blocks": blocks,
-            "text": f"Partner Monitor Alert - {self.link}"
+            "text": f"{self.settings.MYSQL_TABLE_NAME} Update Alert"
         }
 
         await self.send_slack_message(payload)
 
+    async def send_site_down_notification(self):
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Site Monitoring Alert*\nSite is down: {self.link}"
+                }
+            }
+        ]
+
+        if self.stacktrace:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"```{self.stacktrace}```"
+                }
+            })
+
+        payload = {
+            "blocks": blocks,
+            "text": f"Site Down Alert - {self.link}"
+        }
+
+        await self.send_slack_message(payload)
+
+    async def send_notification(self):
+        if "table" in str(self.link):
+            await self.send_table_update_notification()
+        else:
+            await self.send_site_down_notification()
+
         if self.auto_close:
             await self.close_session()
-
-
-if __name__ == "__main__":
-    settings = Settings()
-
-
-    async def test():
-        await SlackNotifier("Partners Table", settings, auto_close=True, stacktrace="Test message")
-
-
-    asyncio.run(test())

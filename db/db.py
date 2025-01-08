@@ -1,8 +1,10 @@
+import os
 from datetime import datetime
 from typing import List, Dict, Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorCollection
-from config import Settings
+
+from utils.config import Settings
 
 
 class MongoDB:
@@ -12,8 +14,8 @@ class MongoDB:
     urls: Optional[AsyncIOMotorCollection] = None
     states: Optional[AsyncIOMotorCollection] = None
 
-    URLS_COLLECTION = "monitored_urls"
-    TIMESTAMPS_COLLECTION = "monitor_timestamps"
+    URLS_COLLECTION = os.getenv("MONGODB_MONITOR_URLS_COLLECTION")
+    TIMESTAMPS_COLLECTION = os.getenv("MONGODB_TIMESTAMPS_COLLECTION")
 
     def __new__(cls):
         if cls._instance is None:
@@ -23,7 +25,7 @@ class MongoDB:
     @classmethod
     async def connect(cls, settings: Settings):
         if not cls.client:
-            cls.client = AsyncIOMotorClient(settings.MONGODB_URL)
+            cls.client = AsyncIOMotorClient(settings.MONGODB_URI)
             cls.db = cls.client[settings.MONGODB_DB]
             cls.urls = cls.db[cls.URLS_COLLECTION]
             cls.states = cls.db[cls.TIMESTAMPS_COLLECTION]
