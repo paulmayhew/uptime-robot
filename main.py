@@ -39,7 +39,9 @@ async def health_check():
     return {"status": "running"}
 
 
-wsgi_app = ASGIMiddleware(app)
+def wsgi_app(environ, start_response):
+    return ASGIMiddleware(app)(environ, start_response)
+
 
 if __name__ == "__main__":
     import uvicorn
