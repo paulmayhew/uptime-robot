@@ -22,6 +22,8 @@ class SlackNotifier:
 
     _session: Optional[aiohttp.ClientSession] = None
 
+    DEFAULT_USERS = ["U054ETQ0E", "USERA6XFF"]
+
     def __init__(self, link: str, is_table: bool, settings: Settings, *, auto_close: bool = False,
                  stacktrace: str = "", users_to_notify: List[str] = None, is_restored: bool = False):
         self.link = link
@@ -29,7 +31,7 @@ class SlackNotifier:
         self.settings = settings
         self.auto_close = auto_close
         self.stacktrace = stacktrace
-        self.users_to_notify = ["U054ETQ0E", "USERA6XFF"]
+        self.users_to_notify = users_to_notify if users_to_notify is not None else self.DEFAULT_USERS
         self.is_restored = is_restored
 
     def __await__(self) -> Generator:
