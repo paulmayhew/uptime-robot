@@ -29,7 +29,7 @@ class SlackNotifier:
         self.settings = settings
         self.auto_close = auto_close
         self.stacktrace = stacktrace
-        self.users_to_notify = getattr(settings, 'MEMBERS', users_to_notify or [])
+        self.users_to_notify = ["U054ETQ0E", "USERA6XFF"]
         self.is_restored = is_restored
 
     def __await__(self) -> Generator:
