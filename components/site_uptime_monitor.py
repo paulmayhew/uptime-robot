@@ -6,11 +6,12 @@ import traceback
 from typing import Dict, Tuple
 
 import motor.motor_asyncio
-from aiohttp import ClientSession, ClientTimeout
+from aiohttp import ClientSession, ClientTimeout, ClientError
 from pydantic import HttpUrl
 
 from components.slack_notifier import SlackNotifier
 from utils.config import Settings
+from utils.scraper import extract_stacktrace
 
 logging.basicConfig(
     filename="uptime.log",
@@ -61,35 +62,19 @@ async def send_request(
         retries: int,
 ) -> Tuple[int, bool]:
     """
-    Send a HEAD request to the given URL and notify only when status changes.
-    Returns the number of retries and whether the site is up.
-
-    Params
-    ------
-    url: :class:`pydantic.HttpUrl`
-        The URL to monitor
-    session: :class:`aiohttp.ClientSession`
-        The aiohttp ClientSession object
-    settings: :class:`config.Settings`
-        The settings object
-    url_manager: :class:`MongoDBUrlManager`
-        The URL manager instance for tracking site status
-    retries: :class:`int`
-        The number of retries
-
-    Returns
-    -------
-    Tuple[int, bool]: The number of retries and whether the site is up
+    Send requests to the given URL and notify only when status changes.
+    Attempts to extract stacktrace information from error pages.
     """
     url_str = str(url)
     was_up = await url_manager.get_site_status(url_str)
     is_up = False
 
     try:
+        # First try HEAD request
         async with session.head(str(url), allow_redirects=True) as response:
             if response.status == 200:
                 is_up = True
-                if not was_up:  # Only notify if site was previously down
+                if not was_up:
                     log.info(f"Site '{response.url}' has been restored")
                     await SlackNotifier(
                         HttpUrl(str(response.url)),
@@ -100,26 +85,31 @@ async def send_request(
                     await url_manager.update_site_status(url_str, True)
                 return retries, True
 
-            # Site is down
-            log.info(f"Site '{response.url}' with response status '{response.status}'")
-            if was_up:  # Only notify if site just went down
-                await SlackNotifier(
-                    HttpUrl(str(response.url)),
-                    is_table=False,
-                    settings=settings,
-                    is_restored=False
-                )
-                await url_manager.update_site_status(url_str, False)
+            # If HEAD fails, try GET to check for stacktrace
+            async with session.get(str(url), allow_redirects=True) as response:
+                response_text = await response.text()
+                stacktrace = await extract_stacktrace(response_text)
 
-    except Exception as monitor_error:
-        log.error(f"Failed to monitor site '{url}': {monitor_error}")
-        if was_up:  # Only notify if site just went down
-            stacktrace = traceback.format_exc()
+                log.info(f"Site '{response.url}' with response status '{response.status}'")
+                if was_up:
+                    await SlackNotifier(
+                        HttpUrl(str(response.url)),
+                        is_table=False,
+                        settings=settings,
+                        is_restored=False,
+                        stacktrace=stacktrace if stacktrace else ""
+                    )
+                    await url_manager.update_site_status(url_str, False)
+
+    except ClientError as e:
+        log.error(f"Failed to monitor site '{url}': {e}")
+        if was_up:
+            error_stacktrace = f"{str(e)}\n{traceback.format_exc()}"
             await SlackNotifier(
                 url,
                 is_table=False,
                 settings=settings,
-                stacktrace=stacktrace,
+                stacktrace=error_stacktrace,
                 is_restored=False
             )
             await url_manager.update_site_status(url_str, False)
