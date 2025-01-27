@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Optional, Generator
+from typing import Optional, Generator, List
 
 import aiohttp
 
@@ -23,12 +23,14 @@ class SlackNotifier:
     _session: Optional[aiohttp.ClientSession] = None
 
     def __init__(self, link: str, is_table: bool, settings: Settings, *, auto_close: bool = False,
-                 stacktrace: str = ""):
+                 stacktrace: str = "", users_to_notify: List[str] = None, is_restored: bool = False):
         self.link = link
         self.is_table: bool = is_table
         self.settings = settings
         self.auto_close = auto_close
         self.stacktrace = stacktrace
+        self.users_to_notify = getattr(settings, 'MEMBERS', users_to_notify or [])
+        self.is_restored = is_restored
 
     def __await__(self) -> Generator:
         """Make the class awaitable."""
@@ -49,6 +51,13 @@ class SlackNotifier:
         if cls._session is not None and not cls._session.closed:
             await cls._session.close()
             cls._session = None
+
+    def _format_user_mentions(self) -> str:
+        """Format user IDs into Slack mentions."""
+        if not self.users_to_notify:
+            return ""
+        mentions = " ".join(f"<@{user_id}>" for user_id in self.users_to_notify)
+        return f"{mentions} "
 
     async def send_slack_message(self, payload: dict):
         """
@@ -85,12 +94,14 @@ class SlackNotifier:
             log.error(f"Failed to send Slack message after {retries} retries")
 
     async def send_table_update_notification(self):
+        user_mentions = self._format_user_mentions()
         blocks = [
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{self.settings.MYSQL_TABLE_NAME} Update Alert*\n{self.link} has new entries!"
+                    "text": f"{user_mentions}*{self.settings.MYSQL_TABLE_NAME} "
+                            f"Update Alert*\n{self.link} has new entries!"
                 }
             }
         ]
@@ -106,18 +117,27 @@ class SlackNotifier:
 
         payload = {
             "blocks": blocks,
-            "text": f"{self.settings.MYSQL_TABLE_NAME} Update Alert"
+            "text": f"{user_mentions}{self.settings.MYSQL_TABLE_NAME} Update Alert"
         }
 
         await self.send_slack_message(payload)
 
     async def send_site_down_notification(self):
+        user_mentions = self._format_user_mentions()
+
+        if self.is_restored:
+            message = f"{user_mentions}*Site Restored Alert*\nSite is back online: {self.link} 🎉"
+            title = f"Site Restored Alert - {self.link}"
+        else:
+            message = f"{user_mentions}*Site Monitoring Alert*\nSite is down: {self.link} ❌"
+            title = f"Site Down Alert - {self.link}"
+
         blocks = [
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Site Monitoring Alert*\nSite is down: {self.link}"
+                    "text": message
                 }
             }
         ]
@@ -133,7 +153,7 @@ class SlackNotifier:
 
         payload = {
             "blocks": blocks,
-            "text": f"Site Down Alert - {self.link}"
+            "text": title
         }
 
         await self.send_slack_message(payload)
