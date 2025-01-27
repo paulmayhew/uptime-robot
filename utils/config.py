@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     MONGODB_URI: str
     MONGODB_DB: str
     MONITOR_INTERVAL: int = Field(default=300, gt=0)
+    DOWN_MONITOR_INTERVAL: int = Field(default=120, gt=0)
     REQUEST_RETRIES: int = Field(default=10, gt=0)
     REQUEST_TIMEOUT: int = Field(default=90, gt=0)
     SLACK_WEBHOOK_URL: str

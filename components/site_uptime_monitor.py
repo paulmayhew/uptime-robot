@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import traceback
-from typing import Dict
+from typing import Dict, Tuple
 
 import motor.motor_asyncio
 from aiohttp import ClientSession, ClientTimeout
@@ -27,7 +27,7 @@ class MongoDBUrlManager:
         self.db = self.client[settings.MONGODB_DB]
         self.url_collection = self.db['monitored_urls']
         self.timestamp_collection = self.db['monitored_tables']
-        self.site_status_collection = self.db['site_status']  # New collection for tracking site status
+        self.site_status_collection = self.db['site_status']
 
     async def get_urls(self):
         urls = await self.url_collection.find().to_list(length=None)
@@ -48,7 +48,6 @@ class MongoDBUrlManager:
 
     @staticmethod
     def _validate_url(url: str) -> HttpUrl:
-        # Prepend http:// if no scheme is present
         if not url.startswith(('http://', 'https://')):
             url = f'http://{url}'
         return HttpUrl(url)
@@ -60,10 +59,10 @@ async def send_request(
         settings: Settings,
         url_manager: MongoDBUrlManager,
         retries: int,
-) -> int:
+) -> Tuple[int, bool]:
     """
     Send a HEAD request to the given URL and notify if the response status changes.
-    Tracks both downtime and restoration events.
+    Returns the number of retries and whether the site is up.
 
     Params
     ------
@@ -80,16 +79,17 @@ async def send_request(
 
     Returns
     -------
-    The number of retries
+    Tuple[int, bool]: The number of retries and whether the site is up
     """
     url_str = str(url)
     was_up = await url_manager.get_site_status(url_str)
+    is_up = False
 
     try:
         async with session.head(str(url), allow_redirects=True) as response:
             if response.status == 200:
+                is_up = True
                 if not was_up:
-                    # Site was down but is now up - send restoration notification
                     log.info(f"Site '{response.url}' has been restored")
                     await SlackNotifier(
                         HttpUrl(str(response.url)),
@@ -97,12 +97,11 @@ async def send_request(
                         settings=settings,
                         is_restored=True
                     )
-                    await url_manager.update_site_status(url_str, True)
-                return retries
+                await url_manager.update_site_status(url_str, True)
+                return retries, True
 
-            # Site is down
             log.info(f"Site '{response.url}' with response status '{response.status}'")
-            if was_up:  # Only notify if the site was previously up
+            if was_up:
                 await SlackNotifier(
                     HttpUrl(str(response.url)),
                     is_table=False,
@@ -125,12 +124,13 @@ async def send_request(
         await url_manager.update_site_status(url_str, False)
         retries += 1
 
-    return retries
+    return retries, is_up
 
 
 async def monitor_links(url: HttpUrl, settings: Settings, url_manager: MongoDBUrlManager):
     """
     Monitors the specified URL by sending periodic HTTP requests.
+    Uses different intervals based on site status.
 
     Params
     ------
@@ -144,10 +144,24 @@ async def monitor_links(url: HttpUrl, settings: Settings, url_manager: MongoDBUr
     retries = 0
     max_retries = settings.REQUEST_RETRIES
     timeout = ClientTimeout(total=settings.REQUEST_TIMEOUT)
+
     async with ClientSession(timeout=timeout) as session:
         while retries < max_retries:
-            retries = await send_request(url, session, settings, url_manager, retries)
-            await asyncio.sleep(settings.MONITOR_INTERVAL)
+            retries, is_up = await send_request(url, session, settings, url_manager, retries)
+
+            # Use shorter interval if site is down
+            interval = (
+                settings.MONITOR_INTERVAL if is_up
+                else settings.DOWN_MONITOR_INTERVAL
+            )
+
+            if not is_up:
+                log.info(
+                    f"Site {url} is down, using shorter interval: "
+                    f"{settings.DOWN_MONITOR_INTERVAL} seconds"
+                )
+
+            await asyncio.sleep(interval)
 
 
 async def spawn_site_monitors(
