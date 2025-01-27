@@ -61,7 +61,7 @@ async def send_request(
         retries: int,
 ) -> Tuple[int, bool]:
     """
-    Send a HEAD request to the given URL and notify if the response status changes.
+    Send a HEAD request to the given URL and notify only when status changes.
     Returns the number of retries and whether the site is up.
 
     Params
@@ -89,7 +89,7 @@ async def send_request(
         async with session.head(str(url), allow_redirects=True) as response:
             if response.status == 200:
                 is_up = True
-                if not was_up:
+                if not was_up:  # Only notify if site was previously down
                     log.info(f"Site '{response.url}' has been restored")
                     await SlackNotifier(
                         HttpUrl(str(response.url)),
@@ -97,23 +97,24 @@ async def send_request(
                         settings=settings,
                         is_restored=True
                     )
-                await url_manager.update_site_status(url_str, True)
+                    await url_manager.update_site_status(url_str, True)
                 return retries, True
 
+            # Site is down
             log.info(f"Site '{response.url}' with response status '{response.status}'")
-            if was_up:
+            if was_up:  # Only notify if site just went down
                 await SlackNotifier(
                     HttpUrl(str(response.url)),
                     is_table=False,
                     settings=settings,
                     is_restored=False
                 )
-            await url_manager.update_site_status(url_str, False)
+                await url_manager.update_site_status(url_str, False)
 
     except Exception as monitor_error:
         log.error(f"Failed to monitor site '{url}': {monitor_error}")
-        stacktrace = traceback.format_exc()
-        if was_up:
+        if was_up:  # Only notify if site just went down
+            stacktrace = traceback.format_exc()
             await SlackNotifier(
                 url,
                 is_table=False,
@@ -121,7 +122,7 @@ async def send_request(
                 stacktrace=stacktrace,
                 is_restored=False
             )
-        await url_manager.update_site_status(url_str, False)
+            await url_manager.update_site_status(url_str, False)
         retries += 1
 
     return retries, is_up
@@ -157,7 +158,7 @@ async def monitor_links(url: HttpUrl, settings: Settings, url_manager: MongoDBUr
 
             if not is_up:
                 log.info(
-                    f"Site {url} is down, using shorter interval: "
+                    f"Site {url} is down, checking again in "
                     f"{settings.DOWN_MONITOR_INTERVAL} seconds"
                 )
 
